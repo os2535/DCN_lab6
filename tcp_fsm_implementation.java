@@ -1,303 +1,257 @@
-import java.util.*;
+import Fsm.*;
+import java.util.Scanner;
 
 
 public class TCPStateMachine {
     
-    // TCP State definitions
-    private enum State {
-        CLOSED,
-        LISTEN,
-        SYN_SENT,
-        SYN_RCVD,
-        ESTABLISHED,
-        FIN_WAIT_1,
-        FIN_WAIT_2,
-        CLOSING,
-        TIME_WAIT,
-        CLOSE_WAIT,
-        LAST_ACK
-    }
+    private FSM fsm;
+    private int dataCount = 0;
     
-    // Current state of the FSM
-    private State currentState;
+    // State objects
+    private State closed;
+    private State listen;
+    private State synSent;
+    private State synRcvd;
+    private State established;
+    private State finWait1;
+    private State finWait2;
+    private State closing;
+    private State timeWait;
+    private State closeWait;
+    private State lastAck;
     
-    // Counter for SDATA/RDATA events
-    private int dataCount;
+    // Event objects
+    private Event passiveEvent;
+    private Event activeEvent;
+    private Event synEvent;
+    private Event synAckEvent;
+    private Event ackEvent;
+    private Event rdataEvent;
+    private Event sdataEvent;
+    private Event finEvent;
+    private Event closeEvent;
+    private Event timeoutEvent;
     
-    
-    /* Constructor - initializes FSM to CLOSED state
-     */
+   
     public TCPStateMachine() {
-        this.currentState = State.CLOSED;
-        this.dataCount = 0;
+        createStates();
+        createEvents();
+        createFSM();
+        addTransitions();
     }
     
-    /* Get the current state name
-     */
-    public String getCurrentStateName() {
-        return currentState.toString();
+    
+    private void createStates() {
+        closed = new State("CLOSED");
+        listen = new State("LISTEN");
+        synSent = new State("SYN_SENT");
+        synRcvd = new State("SYN_RCVD");
+        established = new State("ESTABLISHED");
+        finWait1 = new State("FIN_WAIT_1");
+        finWait2 = new State("FIN_WAIT_2");
+        closing = new State("CLOSING");
+        timeWait = new State("TIME_WAIT");
+        closeWait = new State("CLOSE_WAIT");
+        lastAck = new State("LAST_ACK");
+    }
+    
+    
+    private void createEvents() {
+        passiveEvent = new Event("PASSIVE");
+        activeEvent = new Event("ACTIVE");
+        synEvent = new Event("SYN");
+        synAckEvent = new Event("SYNACK");
+        ackEvent = new Event("ACK");
+        rdataEvent = new Event("RDATA");
+        sdataEvent = new Event("SDATA");
+        finEvent = new Event("FIN");
+        closeEvent = new Event("CLOSE");
+        timeoutEvent = new Event("TIMEOUT");
+    }
+    
+    
+    private void createFSM() {
+        fsm = new FSM("TCP_FSM", closed);
+    }
+    
+    
+    private void addTransitions() {
+        // From CLOSED
+        fsm.addTransition(new Transition(closed, passiveEvent, listen, 
+            new StandardAction("PASSIVE", "CLOSED")));
+        fsm.addTransition(new Transition(closed, activeEvent, synSent, 
+            new StandardAction("ACTIVE", "CLOSED")));
+        
+        // From LISTEN
+        fsm.addTransition(new Transition(listen, synEvent, synRcvd, 
+            new StandardAction("SYN", "LISTEN")));
+        fsm.addTransition(new Transition(listen, closeEvent, closed, 
+            new StandardAction("CLOSE", "LISTEN")));
+        
+        // From SYN_SENT
+        fsm.addTransition(new Transition(synSent, synEvent, synRcvd, 
+            new StandardAction("SYN", "SYN_SENT")));
+        fsm.addTransition(new Transition(synSent, synAckEvent, established, 
+            new StandardAction("SYNACK", "SYN_SENT")));
+        fsm.addTransition(new Transition(synSent, closeEvent, closed, 
+            new StandardAction("CLOSE", "SYN_SENT")));
+        
+        // From SYN_RCVD
+        fsm.addTransition(new Transition(synRcvd, ackEvent, established, 
+            new StandardAction("ACK", "SYN_RCVD")));
+        fsm.addTransition(new Transition(synRcvd, closeEvent, finWait1, 
+            new StandardAction("CLOSE", "SYN_RCVD")));
+        
+        // From ESTABLISHED - special handling for data events
+        fsm.addTransition(new Transition(established, rdataEvent, established, 
+            new DataAction("RDATA", this)));
+        fsm.addTransition(new Transition(established, sdataEvent, established, 
+            new DataAction("SDATA", this)));
+        fsm.addTransition(new Transition(established, finEvent, closeWait, 
+            new StandardAction("FIN", "ESTABLISHED")));
+        fsm.addTransition(new Transition(established, closeEvent, finWait1, 
+            new StandardAction("CLOSE", "ESTABLISHED")));
+        
+        // From FIN_WAIT_1
+        fsm.addTransition(new Transition(finWait1, finEvent, closing, 
+            new StandardAction("FIN", "FIN_WAIT_1")));
+        fsm.addTransition(new Transition(finWait1, ackEvent, finWait2, 
+            new StandardAction("ACK", "FIN_WAIT_1")));
+        
+        // From FIN_WAIT_2
+        fsm.addTransition(new Transition(finWait2, finEvent, timeWait, 
+            new StandardAction("FIN", "FIN_WAIT_2")));
+        
+        // From CLOSING
+        fsm.addTransition(new Transition(closing, ackEvent, timeWait, 
+            new StandardAction("ACK", "CLOSING")));
+        
+        // From TIME_WAIT
+        fsm.addTransition(new Transition(timeWait, timeoutEvent, closed, 
+            new StandardAction("TIMEOUT", "TIME_WAIT")));
+        
+        // From CLOSE_WAIT
+        fsm.addTransition(new Transition(closeWait, closeEvent, lastAck, 
+            new StandardAction("CLOSE", "CLOSE_WAIT")));
+        
+        // From LAST_ACK
+        fsm.addTransition(new Transition(lastAck, ackEvent, closed, 
+            new StandardAction("ACK", "LAST_ACK")));
     }
     
    
-    public void processEvent(String event) {
-        State previousState = currentState;
-        
-        switch (currentState) {
-            case CLOSED:
-                processClosed(event);
-                break;
-            case LISTEN:
-                processListen(event);
-                break;
-            case SYN_SENT:
-                processSynSent(event);
-                break;
-            case SYN_RCVD:
-                processSynRcvd(event);
-                break;
-            case ESTABLISHED:
-                processEstablished(event);
-                break;
-            case FIN_WAIT_1:
-                processFinWait1(event);
-                break;
-            case FIN_WAIT_2:
-                processFinWait2(event);
-                break;
-            case CLOSING:
-                processClosing(event);
-                break;
-            case TIME_WAIT:
-                processTimeWait(event);
-                break;
-            case CLOSE_WAIT:
-                processCloseWait(event);
-                break;
-            case LAST_ACK:
-                processLastAck(event);
-                break;
-        }
-        
-        // Display state transition if state changed
-        if (previousState != currentState) {
-            System.out.println("State transition: " + previousState + " -> " + currentState);
+    private Event getEventFromString(String input) {
+        switch (input) {
+            case "PASSIVE": return passiveEvent;
+            case "ACTIVE": return activeEvent;
+            case "SYN": return synEvent;
+            case "SYNACK": return synAckEvent;
+            case "ACK": return ackEvent;
+            case "RDATA": return rdataEvent;
+            case "SDATA": return sdataEvent;
+            case "FIN": return finEvent;
+            case "CLOSE": return closeEvent;
+            case "TIMEOUT": return timeoutEvent;
+            default: return null;
         }
     }
     
+   
+    public void processEvent(String input) {
+        Event event = getEventFromString(input);
+        
+        if (event == null) {
+            System.out.println("Error: unexpected Event: " + input);
+            return;
+        }
+        
+        try {
+            fsm.doEvent(event);
+        } catch (FsmException e) {
+            // Display exception as required
+            System.out.println(e.toString());
+        }
+    }
     
-     /* Process events in CLOSED state
-     */
-    private void processClosed(String event) {
-        switch (event) {
-            case "PASSIVE":
-                currentState = State.LISTEN;
-                break;
-            case "ACTIVE":
-                currentState = State.SYN_SENT;
-                break;
-            default:
-                handleInvalidEvent(event);
+   
+    public int incrementDataCount() {
+        return ++dataCount;
+    }
+    
+    public String getCurrentState() {
+        return fsm.currentState().name();
+    }
+    
+    
+    static class StandardAction extends Action {
+        private String eventName;
+        private String stateName;
+        
+        public StandardAction(String eventName, String stateName) {
+            this.eventName = eventName;
+            this.stateName = stateName;
+        }
+        
+        public void execute() {
+            System.out.println("Event " + eventName + " received, current State is " + stateName);
         }
     }
     
     /**
-     * Process events in LISTEN state
+     * Data Action class for RDATA/SDATA in ESTABLISHED state
+     * Prints: "DATA received n" or "DATA sent n"
      */
-    private void processListen(String event) {
-        switch (event) {
-            case "SYN":
-                currentState = State.SYN_RCVD;
-                break;
-            case "CLOSE":
-                currentState = State.CLOSED;
-                break;
-            case "SEND":
-                // Ignore SEND event in LISTEN state as per instructions
-                System.out.println("SEND event ignored in LISTEN state");
-                break;
-            default:
-                handleInvalidEvent(event);
+    static class DataAction extends Action {
+        private String eventName;
+        private TCPStateMachine machine;
+        
+        public DataAction(String eventName, TCPStateMachine machine) {
+            this.eventName = eventName;
+            this.machine = machine;
+        }
+        
+        public void execute() {
+            int count = machine.incrementDataCount();
+            if (eventName.equals("RDATA")) {
+                System.out.println("DATA received " + count);
+            } else {
+                System.out.println("DATA sent " + count);
+            }
         }
     }
     
-    
-     //Process events in SYN_SENT state
-     
-    private void processSynSent(String event) {
-        switch (event) {
-            case "SYN":
-                currentState = State.SYN_RCVD;
-                break;
-            case "SYNACK":
-                currentState = State.ESTABLISHED;
-                break;
-            case "CLOSE":
-                currentState = State.CLOSED;
-                break;
-            default:
-                handleInvalidEvent(event);
-        }
-    }
-    
-    
-     // Process events in SYN_RCVD state
-     
-    private void processSynRcvd(String event) {
-        switch (event) {
-            case "ACK":
-                currentState = State.ESTABLISHED;
-                break;
-            case "CLOSE":
-                currentState = State.FIN_WAIT_1;
-                break;
-            default:
-                handleInvalidEvent(event);
-        }
-    }
-    
-    /* Process events in ESTABLISHED state
-       Special handling for RDATA and SDATA events
-     */
-    private void processEstablished(String event) {
-        switch (event) {
-            case "RDATA":
-                dataCount++;
-                System.out.println("DATA received " + dataCount);
-                // Stay in ESTABLISHED state
-                break;
-            case "SDATA":
-                dataCount++;
-                System.out.println("DATA sent " + dataCount);
-                // Stay in ESTABLISHED state
-                break;
-            case "FIN":
-                currentState = State.CLOSE_WAIT;
-                break;
-            case "CLOSE":
-                currentState = State.FIN_WAIT_1;
-                break;
-            default:
-                handleInvalidEvent(event);
-        }
-    }
-    
-    /* Process events in FIN_WAIT_1 state
-     */
-    private void processFinWait1(String event) {
-        switch (event) {
-            case "FIN":
-                currentState = State.CLOSING;
-                break;
-            case "ACK":
-                currentState = State.FIN_WAIT_2;
-                break;
-            default:
-                handleInvalidEvent(event);
-        }
-    }
-    
-    /*Process events in FIN_WAIT_2 state
-     */
-    private void processFinWait2(String event) {
-        switch (event) {
-            case "FIN":
-                currentState = State.TIME_WAIT;
-                break;
-            default:
-                handleInvalidEvent(event);
-        }
-    }
-    
-    /*Process events in CLOSING state
-     */
-    private void processClosing(String event) {
-        switch (event) {
-            case "ACK":
-                currentState = State.TIME_WAIT;
-                break;
-            default:
-                handleInvalidEvent(event);
-        }
-    }
-    
-    /*Process events in TIME_WAIT state
-     */
-    private void processTimeWait(String event) {
-        switch (event) {
-            case "TIMEOUT":
-                currentState = State.CLOSED;
-                break;
-            default:
-                handleInvalidEvent(event);
-        }
-    }
-    
-    /*Process events in CLOSE_WAIT state
-     */
-    private void processCloseWait(String event) {
-        switch (event) {
-            case "CLOSE":
-                currentState = State.LAST_ACK;
-                break;
-            default:
-                handleInvalidEvent(event);
-        }
-    }
-    
-    /**
-     * Process events in LAST_ACK state
-     */
-    private void processLastAck(String event) {
-        switch (event) {
-            case "ACK":
-                currentState = State.CLOSED;
-                break;
-            default:
-                handleInvalidEvent(event);
-        }
-    }
-    
-    /* Handle invalid events
-     */
-    private void handleInvalidEvent(String event) {
-        System.out.println("Error: unexpected Event: " + event);
-    }
-    
-    /* Main program loop
-     */
+
     public static void main(String[] args) {
-        TCPStateMachine fsm = new TCPStateMachine();
+        TCPStateMachine machine = new TCPStateMachine();
         Scanner scanner = new Scanner(System.in);
         
         System.out.println("=".repeat(60));
         System.out.println("TCP State Machine Simulator");
+        System.out.println("Using FSM Package");
         System.out.println("=".repeat(60));
         System.out.println("Valid events: PASSIVE, ACTIVE, SYN, SYNACK, ACK,");
         System.out.println("              RDATA, SDATA, FIN, CLOSE, TIMEOUT");
-        System.out.println("Events are case-insensitive and space-separated");
-        System.out.println("Enter Ctrl+D (Unix/Mac) or Ctrl+Z (Windows) to end input");
+        System.out.println("Events must be in UPPERCASE");
         System.out.println("=".repeat(60));
-        System.out.println("Initial state: " + fsm.getCurrentStateName());
+        System.out.println("Initial state: " + machine.getCurrentState());
         System.out.println();
         
-        // Read and process events from standard input
+        // Process events until EOF
         while (scanner.hasNext()) {
             String input = scanner.next().trim().toUpperCase();
             
-            // Skip empty input
             if (input.isEmpty()) {
                 continue;
             }
             
-            System.out.println("\nProcessing event: " + input);
-            fsm.processEvent(input);
-            System.out.println("Current state: " + fsm.getCurrentStateName());
+            machine.processEvent(input);
+            System.out.println("Current state: " + machine.getCurrentState());
+            System.out.println();
         }
         
         scanner.close();
-        System.out.println("\n" + "=".repeat(60));
-        System.out.println("End of input. Final state: " + fsm.getCurrentStateName());
-        System.out.println("Total data events processed: " + fsm.dataCount);
+        System.out.println("=".repeat(60));
+        System.out.println("Program terminated. Final state: " + machine.getCurrentState());
         System.out.println("=".repeat(60));
     }
 }
